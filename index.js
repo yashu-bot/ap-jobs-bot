@@ -137,7 +137,12 @@ async function startBot() {
     if (!msg.message || msg.key.fromMe) return;
 
     const from = msg.key.remoteJid;
-    const phone = from.split('@')[0].split(':')[0];
+
+    // WhatsApp sometimes sends a privacy-protected ID (@lid) instead of the real number.
+    // When that happens, Baileys also provides remoteJidAlt with the real phone-based JID — prefer that.
+    const realJid = msg.key.remoteJidAlt || from;
+    const phone = realJid.split('@')[0].split(':')[0];
+
     const text =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
