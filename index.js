@@ -19,8 +19,31 @@ const userState = {};
 let currentQR = null;
 let isConnected = false;
 
-const DISTRICTS = ['Guntur', 'Anantapur', 'Krishna', 'Visakhapatnam', 'State-wide'];
-const JOB_TYPES = ['Police Constable', 'Sub Inspector', 'MRO', 'VRO', 'Group 1', 'Group 2', 'Group 3', 'Group 4', 'Teacher / DSC', 'Junior Lecturer', 'Junior Assistant', 'Panchayat Secretary', 'Village/Ward Volunteer', 'Grama/Ward Sachivalayam', 'Anganwadi', 'Forest Department', 'High Court Staff', 'Power Department (DISCOM)', 'Health Department', 'Agriculture Officer', 'APSRTC', 'Excise Department'];
+const JOB_TYPES = [
+  'All AP Govt Jobs',
+  'Police Constable',
+  'Sub Inspector',
+  'MRO',
+  'VRO',
+  'Group 1',
+  'Group 2',
+  'Group 3',
+  'Group 4',
+  'Teacher / DSC',
+  'Junior Lecturer',
+  'Junior Assistant',
+  'Panchayat Secretary',
+  'Village/Ward Volunteer',
+  'Grama/Ward Sachivalayam',
+  'Anganwadi',
+  'Forest Department',
+  'High Court Staff',
+  'Power Department (DISCOM)',
+  'Health Department',
+  'Agriculture Officer',
+  'APSRTC',
+  'Excise Department'
+];
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
@@ -76,38 +99,33 @@ async function handleMessage(sock, jid, phone, text) {
   const state = userState[phone];
 
   if (text.toLowerCase() === 'hi' || text.toLowerCase() === 'start') {
-    state.step = 'district';
-    await sendList(sock, jid, 'Select your District', DISTRICTS);
-    return;
-  }
-
-  if (state.step === 'district' && DISTRICTS.includes(text)) {
-    state.district = text;
     state.step = 'jobtype';
-    await sendList(sock, jid, 'Select Job Type', JOB_TYPES);
+    await sendJobList(sock, jid);
     return;
   }
 
-  if (state.step === 'jobtype' && JOB_TYPES.includes(text)) {
-    state.jobType = text;
-    state.step = 'result';
-    await checkAndReply(sock, jid, phone, state.district, state.jobType);
-    return;
+  if (state.step === 'jobtype') {
+    const matched = JOB_TYPES.find(j => j.toLowerCase() === text.toLowerCase());
+    if (matched) {
+      await checkAndReply(sock, jid, phone, matched);
+      return;
+    }
   }
 
+  await sock.sendMessage(sock, { text: 'Type "Hi" to start checking job notifications.' }).catch(() => {});
   await sock.sendMessage(jid, { text: 'Type "Hi" to start checking job notifications.' });
 }
 
-async function sendList(sock, jid, title, options) {
+async function sendJobList(sock, jid) {
   await sock.sendMessage(jid, {
-    text: title + '\n\n' + options.map((o, i) => `${i + 1}. ${o}`).join('\n') +
-      '\n\nReply with the exact name (e.g. "Guntur").'
+    text: 'Select Job Type\n\n' + JOB_TYPES.map((o, i) => `${i + 1}. ${o}`).join('\n') +
+      '\n\nReply with the exact name (e.g. "Police Constable" or "All AP Govt Jobs").'
   });
 }
 
-async function checkAndReply(sock, jid, phone, district, jobType) {
+async function checkAndReply(sock, jid, phone, jobType) {
   await supabase.from('users').upsert(
-    { phone, district, job_type: jobType, last_interaction: new Date() },
+    { phone, job_type: jobType, last_interaction: new Date() },
     { onConflict: 'phone' }
   );
 
@@ -122,15 +140,15 @@ async function checkAndReply(sock, jid, phone, district, jobType) {
     userRow?.expiry_date &&
     new Date(userRow.expiry_date) > new Date();
 
-  const { data: jobs } = await supabase
-    .from('live_jobs')
-    .select('*')
-    .or(`district.eq.${district},district.eq.State-wide`)
-    .eq('job_type', jobType);
+  let query = supabase.from('live_jobs').select('*').order('last_updated', { ascending: false }).limit(10);
+  if (jobType !== 'All AP Govt Jobs') {
+    query = query.eq('job_type', jobType);
+  }
+  const { data: jobs } = await query;
 
   if (!jobs || jobs.length === 0) {
     await sock.sendMessage(jid, {
-      text: `No active notification right now for ${jobType} in ${district}. We'll notify you when one opens.`
+      text: `No active notification right now for ${jobType}. We'll notify you when one opens.`
     });
     return;
   }
@@ -187,38 +205,11 @@ app.get('/qr', async (req, res) => {
   `);
 });
 
-app.get('/test-network', async (req, res) => {
-  const axios = require('axios');
-  const results = {};
-
-  try {
-    await axios.get('https://google.com', { timeout: 10000 });
-    results.google = 'OK';
-  } catch (err) {
-    results.google = 'FAILED: ' + err.message;
-  }
-
-  try {
-    await axios.get('https://slprb.ap.gov.in/', { timeout: 10000 });
-    results.slprb = 'OK';
-  } catch (err) {
-    results.slprb = 'FAILED: ' + err.message;
-  }
-
-  try {
-    await axios.get('https://www.ap.gov.in/', { timeout: 10000 });
-    results.apgovin = 'OK';
-  } catch (err) {
-    results.apgovin = 'FAILED: ' + err.message;
-  }
-
-  res.json(results);
-});
-
 app.get('/run-scraper', async (req, res) => {
   await runScraper();
   res.send('Scraper ran — check Render logs for results.');
 });
+
 app.get('/', (req, res) => res.send('Bot is alive'));
 
 app.listen(process.env.PORT || 3000, () => console.log('Server running'));
