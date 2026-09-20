@@ -1,19 +1,17 @@
 const dns = require('dns');
-dns.setServers(['8.8.8.8', '1.1.1.1']);                                                                      
+dns.setServers(['8.8.8.8', '1.1.1.1']);
+
 const axios = require('axios');
 const cheerio = require('cheerio');
 const supabase = require('./supabaseClient');
 
-// Standard checklist — kept simple on purpose, same for every job for now
 const STANDARD_DOCS = '10th/SSC certificate, Intermediate/Degree certificate, Aadhar card, Recent passport-size photo, Caste certificate (if applicable), Study/Residence certificate, Signature scan';
 
-// Sources to watch. Add more portals here later using the same pattern.
 const SOURCES = [
   { url: 'https://slprb.ap.gov.in/', name: 'SLPRB' },
   { url: 'https://psc.ap.gov.in/', name: 'APPSC' }
 ];
 
-// Keywords to detect which job type a notification link is about
 const JOB_KEYWORDS = [
   { match: /constable/i, jobType: 'Police Constable' },
   { match: /\bmro\b/i, jobType: 'MRO' },
@@ -22,7 +20,7 @@ const JOB_KEYWORDS = [
   { match: /group[\s-]?4/i, jobType: 'Group 4' }
 ];
 
-async async function scrapeSource(source) {
+async function scrapeSource(source) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const { data: html } = await axios.get(source.url, {
@@ -63,7 +61,6 @@ async function runScraper() {
     const found = await scrapeSource(source);
 
     for (const item of found) {
-      // Check if this exact link is already saved
       const { data: existing } = await supabase
         .from('live_jobs')
         .select('id')
