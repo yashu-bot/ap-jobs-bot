@@ -1,11 +1,12 @@
-const qrcode = require('qrcode');
-let currentQR = null;
+const express = require('express');
+const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
+const qrcode = require('qrcode');
 const supabase = require('./supabaseClient');
 
 const app = express();
@@ -13,6 +14,8 @@ app.use(express.json());
 
 const AUTH_FOLDER = './auth_info';
 const userState = {};
+let currentQR = null;
+let isConnected = false;
 
 const DISTRICTS = ['Guntur', 'Anantapur', 'Krishna', 'Visakhapatnam', 'State-wide'];
 const JOB_TYPES = ['Police Constable', 'MRO', 'VRO', 'Group 2', 'Group 4'];
@@ -31,13 +34,22 @@ async function startBot() {
 
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
-    if (qr) console.log('SCAN THIS QR STRING (paste into a text-to-QR site):\n', qr);
+
+    if (qr) {
+      currentQR = qr;
+      isConnected = false;
+      console.log('New QR generated — visit /qr on your Render URL to scan it');
+    }
+
     if (connection === 'close') {
+      isConnected = false;
       const shouldReconnect =
         lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('Connection closed. Reconnecting:', shouldReconnect);
       if (shouldReconnect) startBot();
     } else if (connection === 'open') {
+      isConnected = true;
+      currentQR = null;
       console.log('✅ Bot connected to WhatsApp');
     }
   });
@@ -151,6 +163,26 @@ app.post('/razorpay-webhook', async (req, res) => {
     }
   }
   res.sendStatus(200);
+});
+
+app.get('/qr', async (req, res) => {
+  if (isConnected) {
+    return res.send('<h2>✅ Bot is already connected to WhatsApp. No QR needed.</h2>');
+  }
+  if (!currentQR) {
+    return res.send('<h2>No QR available yet. Wait a few seconds and refresh.</h2><script>setTimeout(()=>location.reload(),3000)</script>');
+  }
+  const qrImage = await qrcode.toDataURL(currentQR);
+  res.send(`
+    <html>
+      <body style="text-align:center; font-family:sans-serif; padding-top:40px;">
+        <h2>Scan this with WhatsApp → Linked Devices</h2>
+        <img src="${qrImage}" style="width:300px;height:300px;" />
+        <p>This page auto-refreshes every 5 seconds until connected.</p>
+        <script>setTimeout(() => location.reload(), 5000);</script>
+      </body>
+    </html>
+  `);
 });
 
 app.get('/', (req, res) => res.send('Bot is alive'));
