@@ -8,6 +8,7 @@
     "@whiskeysockets/baileys": "^6.7.9",
     "@supabase/supabase-js": "^2.45.4",
     "express": "^4.19.2",
-    "pino": "^9.4.0"
+    "pino": "^9.4.0",
+    "qrcode": "^1.5.4"
   }
 }
