@@ -7,15 +7,32 @@ const supabase = require('./supabaseClient');
 
 const STANDARD_DOCS = '10th/SSC certificate, Intermediate/Degree certificate, Aadhar card, Recent passport-size photo, Caste certificate (if applicable), Study/Residence certificate, Signature scan';
 
-// RSS feed of an AP government jobs news site — reliable, fast, built for automated reading
-const FEED_URL = 'https://www.apteachers.in/feeds/posts/default?alt=rss&max-results=30';
+const FEED_URL = 'https://www.apteachers.in/feeds/posts/default?alt=rss&max-results=50';
 
 const JOB_KEYWORDS = [
-  { match: /constable/i, jobType: 'Police Constable' },
+  { match: /police\s*constable|\bconstable\b/i, jobType: 'Police Constable' },
+  { match: /sub[\s-]?inspector|\bSI\b/i, jobType: 'Sub Inspector' },
   { match: /\bmro\b/i, jobType: 'MRO' },
   { match: /\bvro\b/i, jobType: 'VRO' },
-  { match: /group[\s-]?2/i, jobType: 'Group 2' },
-  { match: /group[\s-]?4/i, jobType: 'Group 4' }
+  { match: /group[\s-]?1\b/i, jobType: 'Group 1' },
+  { match: /group[\s-]?2\b/i, jobType: 'Group 2' },
+  { match: /group[\s-]?3\b/i, jobType: 'Group 3' },
+  { match: /group[\s-]?4\b/i, jobType: 'Group 4' },
+  { match: /\bDSC\b|teacher\s*recruitment|SGT|school\s*assistant/i, jobType: 'Teacher / DSC' },
+  { match: /junior\s*lecturer/i, jobType: 'Junior Lecturer' },
+  { match: /junior\s*assistant/i, jobType: 'Junior Assistant' },
+  { match: /panchayat\s*secretary/i, jobType: 'Panchayat Secretary' },
+  { match: /ward\s*volunteer|village\s*volunteer/i, jobType: 'Village/Ward Volunteer' },
+  { match: /sachivalayam/i, jobType: 'Grama/Ward Sachivalayam' },
+  { match: /anganwadi/i, jobType: 'Anganwadi' },
+  { match: /forest\s*beat\s*officer|forest\s*range\s*officer/i, jobType: 'Forest Department' },
+  { match: /high\s*court.*recruitment|recruitment.*high\s*court/i, jobType: 'High Court Staff' },
+  { match: /APSPDCL|APEPDCL|APCPDCL|APSPDCL|power\s*department\s*recruitment/i, jobType: 'Power Department (DISCOM)' },
+  { match: /staff\s*nurse|health\s*department\s*recruitment|ANM\b/i, jobType: 'Health Department' },
+  { match: /agriculture\s*officer/i, jobType: 'Agriculture Officer' },
+  { match: /APSRTC|RTC\s*recruitment/i, jobType: 'APSRTC' },
+  { match: /excise\s*constable|excise\s*department/i, jobType: 'Excise Department' },
+  { match: /forest\s*beat/i, jobType: 'Forest Beat Officer' }
 ];
 
 async function scrapeFeed() {
