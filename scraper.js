@@ -8,8 +8,8 @@ const supabase = require('./supabaseClient');
 const STANDARD_DOCS = '10th/SSC certificate, Intermediate/Degree certificate, Aadhar card, Recent passport-size photo, Caste certificate (if applicable), Study/Residence certificate, Signature scan';
 
 const FEED_URL = 'https://www.apteachers.in/feeds/posts/default?alt=rss&max-results=50';
+const SOURCE_STATE = 'Andhra Pradesh';
 
-// Order matters: more specific patterns are checked first to avoid double-tagging
 const JOB_KEYWORDS = [
   { match: /head\s*constable/i, jobType: 'Head Constable' },
   { match: /excise\s*constable/i, jobType: 'Excise Constable' },
@@ -37,11 +37,7 @@ const JOB_KEYWORDS = [
   { match: /high\s*court.*recruitment|recruitment.*high\s*court/i, jobType: 'High Court Staff' }
 ];
 
-// Anything AP govt-related that didn't match a specific category above
 const GENERIC_MATCH = /recruitment|notification|vacanc(y|ies)|walk-?in/i;
-
-// Which state this source belongs to — apteachers.in is AP-focused
-const SOURCE_STATE = 'Andhra Pradesh';
 
 async function scrapeFeed() {
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -87,23 +83,26 @@ async function runScraper() {
   console.log(`Found ${found.length} matching entries in feed.`);
 
   for (const item of found) {
-    const { data: existing } = await supabase
+    // Upsert: if it exists (matched by link+jobType), UPDATE it (fixes stale district/title);
+    // if not, INSERT it fresh. This makes the data self-correcting on every run.
+    const { error } = await supabase
       .from('live_jobs')
-      .select('id')
-      .eq('portal_link', item.link)
-      .eq('job_type', item.jobType)
-      .maybeSingle();
+      .upsert(
+        {
+          district: SOURCE_STATE,
+          job_type: item.jobType,
+          title: item.title,
+          portal_link: item.link,
+          documents_required: STANDARD_DOCS,
+          last_updated: new Date()
+        },
+        { onConflict: 'portal_link,job_type' }
+      );
 
-    if (!existing) {
-      await supabase.from('live_jobs').insert({
-        district: SOURCE_STATE,
-        job_type: item.jobType,
-        title: item.title,
-        portal_link: item.link,
-        documents_required: STANDARD_DOCS,
-        last_updated: new Date()
-      });
-      console.log(`✅ New: ${item.jobType} — ${item.title}`);
+    if (error) {
+      console.log('Upsert error:', error.message);
+    } else {
+      console.log(`✅ Synced: ${item.jobType} — ${item.title}`);
     }
   }
   console.log('Scraper check complete.');
