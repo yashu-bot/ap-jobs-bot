@@ -9,33 +9,39 @@ const STANDARD_DOCS = '10th/SSC certificate, Intermediate/Degree certificate, Aa
 
 const FEED_URL = 'https://www.apteachers.in/feeds/posts/default?alt=rss&max-results=50';
 
+// Order matters: more specific patterns are checked first to avoid double-tagging
 const JOB_KEYWORDS = [
-  { match: /police\s*constable|\bconstable\b/i, jobType: 'Police Constable' },
+  { match: /head\s*constable/i, jobType: 'Head Constable' },
+  { match: /excise\s*constable/i, jobType: 'Excise Constable' },
+  { match: /(?<!head\s)(?<!excise\s)\bconstable\b/i, jobType: 'Police Constable' },
   { match: /sub[\s-]?inspector|\bSI\b/i, jobType: 'Sub Inspector' },
+  { match: /forest\s*beat\s*officer|forest\s*range\s*officer/i, jobType: 'Forest Beat Officer' },
   { match: /\bmro\b/i, jobType: 'MRO' },
   { match: /\bvro\b/i, jobType: 'VRO' },
+  { match: /degree\s*lecturer/i, jobType: 'Degree Lecturer' },
+  { match: /junior\s*lecturer/i, jobType: 'Junior Lecturer' },
+  { match: /\bDSC\b|teacher\s*recruitment|\bSGT\b|school\s*assistant/i, jobType: 'Teacher / DSC' },
   { match: /group[\s-]?1\b/i, jobType: 'Group 1' },
   { match: /group[\s-]?2\b/i, jobType: 'Group 2' },
   { match: /group[\s-]?3\b/i, jobType: 'Group 3' },
   { match: /group[\s-]?4\b/i, jobType: 'Group 4' },
-  { match: /\bDSC\b|teacher\s*recruitment|SGT|school\s*assistant/i, jobType: 'Teacher / DSC' },
-  { match: /junior\s*lecturer/i, jobType: 'Junior Lecturer' },
   { match: /junior\s*assistant/i, jobType: 'Junior Assistant' },
   { match: /panchayat\s*secretary/i, jobType: 'Panchayat Secretary' },
-  { match: /ward\s*volunteer|village\s*volunteer/i, jobType: 'Village/Ward Volunteer' },
   { match: /sachivalayam/i, jobType: 'Grama/Ward Sachivalayam' },
+  { match: /ward\s*volunteer|village\s*volunteer/i, jobType: 'Village/Ward Volunteer' },
   { match: /anganwadi/i, jobType: 'Anganwadi' },
-  { match: /forest\s*beat|forest\s*range\s*officer|forest\s*department/i, jobType: 'Forest Department' },
-  { match: /high\s*court.*recruitment|recruitment.*high\s*court/i, jobType: 'High Court Staff' },
-  { match: /APSPDCL|APEPDCL|APCPDCL|power\s*department\s*recruitment/i, jobType: 'Power Department (DISCOM)' },
   { match: /staff\s*nurse|health\s*department\s*recruitment|\bANM\b/i, jobType: 'Health Department' },
   { match: /agriculture\s*officer/i, jobType: 'Agriculture Officer' },
+  { match: /APSPDCL|APEPDCL|APCPDCL|power\s*department\s*recruitment/i, jobType: 'Power Department (DISCOM)' },
   { match: /APSRTC|RTC\s*recruitment/i, jobType: 'APSRTC' },
-  { match: /excise\s*constable|excise\s*department/i, jobType: 'Excise Department' }
+  { match: /high\s*court.*recruitment|recruitment.*high\s*court/i, jobType: 'High Court Staff' }
 ];
 
-// Catch-all: if a post mentions AP govt recruitment but didn't match any specific keyword above
+// Anything AP govt-related that didn't match a specific category above
 const GENERIC_MATCH = /recruitment|notification|vacanc(y|ies)|walk-?in/i;
+
+// Which state this source belongs to — apteachers.in is AP-focused
+const SOURCE_STATE = 'Andhra Pradesh';
 
 async function scrapeFeed() {
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -61,9 +67,8 @@ async function scrapeFeed() {
           }
         }
 
-        // Also add to the catch-all bucket regardless, so "All AP Govt Jobs" always has full coverage
-        if (GENERIC_MATCH.test(title)) {
-          foundLinks.push({ title, link, jobType: 'All AP Govt Jobs' });
+        if (!matchedSpecific && GENERIC_MATCH.test(title)) {
+          foundLinks.push({ title, link, jobType: 'Other AP Govt Jobs' });
         }
       });
 
@@ -91,7 +96,7 @@ async function runScraper() {
 
     if (!existing) {
       await supabase.from('live_jobs').insert({
-        district: 'State-wide',
+        district: SOURCE_STATE,
         job_type: item.jobType,
         title: item.title,
         portal_link: item.link,
