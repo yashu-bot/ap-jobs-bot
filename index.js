@@ -35,11 +35,6 @@ const CATEGORIES = {
 
 const CATEGORY_NAMES = Object.keys(CATEGORIES);
 
-// ---------- SESSION PERSISTENCE (fixes the 2-3 min logout) ----------
-// Baileys writes several small files into AUTH_FOLDER. We back them all up
-// into one Supabase row, and restore them before Baileys even starts,
-// so a Render restart no longer wipes the WhatsApp login.
-
 async function restoreSessionFromSupabase() {
   try {
     const { data, error } = await supabase
@@ -82,8 +77,6 @@ async function backupSessionToSupabase() {
 async function clearSavedSession() {
   await supabase.from('bot_session').delete().eq('id', 'whatsapp_auth');
 }
-
-// ---------- BOT ----------
 
 async function startBot() {
   await restoreSessionFromSupabase();
@@ -136,19 +129,13 @@ async function startBot() {
     const msg = messages[0];
     if (!msg.message || msg.key.fromMe) return;
 
-    const from = msg.key.remoteJid;
-
-    // WhatsApp sometimes sends a privacy-protected ID (@lid) instead of the real number.
-    // When that happens, Baileys also provides remoteJidAlt with the real phone-based JID — prefer that.
-    const realJid = msg.key.remoteJidAlt || from;
-    const phone = realJid.split('@')[0].split(':')[0];
-
+    const from = msg.key.remoteJid; // raw WhatsApp identity — used for conversation state, may be a LID
     const text =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
       '';
 
-    await handleMessage(sock, from, phone, text.trim());
+    await handleMessage(sock, from, text.trim());
   });
 }
 
@@ -165,14 +152,55 @@ function resolveChoice(input, options) {
   return partial || null;
 }
 
-async function handleMessage(sock, jid, phone, text) {
-  if (!userState[phone]) userState[phone] = { step: 'start' };
-  const state = userState[phone];
+function isValidPhoneInput(text) {
+  const digits = text.replace(/\D/g, '');
+  return digits.length >= 10 && digits.length <= 12;
+}
+
+function normalizePhone(text) {
+  let digits = text.replace(/\D/g, '');
+  if (digits.length === 10) digits = '91' + digits;
+  return digits;
+}
+
+async function getCanonicalPhone(waId) {
+  const { data } = await supabase.from('users').select('phone').eq('wa_id', waId).maybeSingle();
+  return data?.phone || null;
+}
+
+async function handleMessage(sock, jid, text) {
+  if (!userState[jid]) userState[jid] = { step: 'start' };
+  const state = userState[jid];
   const lower = text.toLowerCase();
 
   if (lower === 'hi' || lower === 'start' || lower === 'menu') {
-    state.step = 'state';
-    await sendNumberedList(sock, jid, 'Select your State', STATES);
+    const existingPhone = await getCanonicalPhone(jid);
+    if (existingPhone) {
+      state.phone = existingPhone;
+      state.step = 'state';
+      await sendNumberedList(sock, jid, 'Select your State', STATES);
+    } else {
+      state.step = 'ask_phone';
+      await sock.sendMessage(jid, {
+        text: 'Welcome! To continue, please type your 10-digit mobile number (used only to activate your subscription later).'
+      });
+    }
+    return;
+  }
+
+  if (state.step === 'ask_phone') {
+    if (isValidPhoneInput(text)) {
+      const phone = normalizePhone(text);
+      state.phone = phone;
+      await supabase.from('users').upsert(
+        { wa_id: jid, phone, last_interaction: new Date() },
+        { onConflict: 'wa_id' }
+      );
+      state.step = 'state';
+      await sendNumberedList(sock, jid, 'Thanks! Select your State', STATES);
+    } else {
+      await sock.sendMessage(jid, { text: 'That doesn\'t look like a valid number. Please type your 10-digit mobile number.' });
+    }
     return;
   }
 
@@ -191,7 +219,7 @@ async function handleMessage(sock, jid, phone, text) {
     const allOptions = [...CATEGORY_NAMES, 'All Govt Jobs'];
     const matched = resolveChoice(text, allOptions);
     if (matched === 'All Govt Jobs') {
-      await checkAndReply(sock, jid, phone, state.selectedState, null);
+      await checkAndReply(sock, jid, state.phone, state.selectedState, null);
       return;
     }
     if (matched && CATEGORIES[matched]) {
@@ -206,7 +234,7 @@ async function handleMessage(sock, jid, phone, text) {
     const options = CATEGORIES[state.selectedCategory] || [];
     const matched = resolveChoice(text, options);
     if (matched) {
-      await checkAndReply(sock, jid, phone, state.selectedState, matched);
+      await checkAndReply(sock, jid, state.phone, state.selectedState, matched);
       return;
     }
   }
@@ -222,10 +250,9 @@ async function sendNumberedList(sock, jid, title, options) {
 }
 
 async function checkAndReply(sock, jid, phone, selectedState, jobType) {
-  await supabase.from('users').upsert(
-    { phone, job_type: jobType || 'All Govt Jobs', last_interaction: new Date() },
-    { onConflict: 'phone' }
-  );
+  await supabase.from('users').update(
+    { job_type: jobType || 'All Govt Jobs', last_interaction: new Date() }
+  ).eq('phone', phone);
 
   const { data: userRow } = await supabase
     .from('users')
@@ -276,23 +303,23 @@ async function checkAndReply(sock, jid, phone, selectedState, jobType) {
   await sock.sendMessage(jid, { text: 'Type "Hi" to search again.' });
 }
 
-// ---------- Razorpay webhook (real payment path) ----------
 app.post('/razorpay-webhook', async (req, res) => {
   const payload = req.body;
   if (payload.event === 'payment.captured') {
-    const phone = payload.payload.payment.entity.contact?.replace('+91', '');
+    const rawPhone = payload.payload.payment.entity.contact?.replace('+91', '').replace(/\D/g, '');
+    const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
+
     if (phone) {
       const expiry = new Date();
       expiry.setFullYear(expiry.getFullYear() + 1);
-      await supabase.from('users').upsert(
-        { phone, paid_status: true, expiry_date: expiry.toISOString().split('T')[0] },
-        { onConflict: 'phone' }
-      );
+      await supabase.from('users').update(
+        { paid_status: true, expiry_date: expiry.toISOString().split('T')[0] }
+      ).eq('phone', phone);
 
-      // Send confirmation on WhatsApp automatically
-      if (globalSock) {
+      const { data: row } = await supabase.from('users').select('wa_id').eq('phone', phone).maybeSingle();
+      if (row?.wa_id && globalSock) {
         try {
-          await globalSock.sendMessage(`${phone}@s.whatsapp.net`, {
+          await globalSock.sendMessage(row.wa_id, {
             text: `✅ Payment received! You're now subscribed for 1 year. Type "Hi" to get your job notifications with full apply links and document checklists.`
           });
         } catch (err) {
@@ -304,20 +331,18 @@ app.post('/razorpay-webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
-// ---------- TESTING ONLY: manually mark a phone as paid, since Razorpay isn't live yet ----------
-// Visit: https://your-render-url.onrender.com/mark-paid?phone=91XXXXXXXXXX
-// Remove or protect this before going live publicly.
 app.get('/mark-paid', async (req, res) => {
   const phone = req.query.phone;
   if (!phone) return res.send('Add ?phone=91XXXXXXXXXX to the URL');
 
   const expiry = new Date();
   expiry.setFullYear(expiry.getFullYear() + 1);
-  await supabase.from('users').upsert(
-    { phone, paid_status: true, expiry_date: expiry.toISOString().split('T')[0] },
-    { onConflict: 'phone' }
-  );
-  res.send(`✅ ${phone} marked as paid for testing. Message the bot now to see the full experience.`);
+  const { error } = await supabase.from('users').update(
+    { paid_status: true, expiry_date: expiry.toISOString().split('T')[0] }
+  ).eq('phone', phone);
+
+  if (error) return res.send('Error: ' + error.message);
+  res.send(`✅ ${phone} marked as paid for testing (if that phone exists in users table). Message the bot with "Hi" again to see the full experience.`);
 });
 
 app.get('/qr', async (req, res) => {
