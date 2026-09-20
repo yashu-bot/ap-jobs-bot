@@ -19,31 +19,18 @@ const userState = {};
 let currentQR = null;
 let isConnected = false;
 
-const JOB_TYPES = [
-  'All AP Govt Jobs',
-  'Police Constable',
-  'Sub Inspector',
-  'MRO',
-  'VRO',
-  'Group 1',
-  'Group 2',
-  'Group 3',
-  'Group 4',
-  'Teacher / DSC',
-  'Junior Lecturer',
-  'Junior Assistant',
-  'Panchayat Secretary',
-  'Village/Ward Volunteer',
-  'Grama/Ward Sachivalayam',
-  'Anganwadi',
-  'Forest Department',
-  'High Court Staff',
-  'Power Department (DISCOM)',
-  'Health Department',
-  'Agriculture Officer',
-  'APSRTC',
-  'Excise Department'
-];
+const STATES = ['Andhra Pradesh', 'Telangana'];
+
+const CATEGORIES = {
+  'Police & Security': ['Police Constable', 'Sub Inspector', 'Head Constable', 'Excise Constable', 'Forest Beat Officer'],
+  'Revenue Department': ['MRO', 'VRO'],
+  'Teaching & Education': ['Teacher / DSC', 'Junior Lecturer', 'Degree Lecturer'],
+  'APPSC Group Services': ['Group 1', 'Group 2', 'Group 3', 'Group 4'],
+  'Secretariat & Panchayat': ['Junior Assistant', 'Panchayat Secretary', 'Grama/Ward Sachivalayam', 'Village/Ward Volunteer'],
+  'Other Departments': ['Anganwadi', 'Health Department', 'Agriculture Officer', 'Power Department (DISCOM)', 'APSRTC', 'High Court Staff']
+};
+
+const CATEGORY_NAMES = Object.keys(CATEGORIES);
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
@@ -85,47 +72,112 @@ async function startBot() {
 
     const from = msg.key.remoteJid;
     const phone = from.split('@')[0];
-    const text =
+
+    const listReply = msg.message.listResponseMessage?.singleSelectReply?.selectedRowId;
+    const typedText =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
       '';
 
-    await handleMessage(sock, from, phone, text.trim());
+    const text = (listReply || typedText || '').trim();
+    await handleMessage(sock, from, phone, text);
   });
 }
 
 async function handleMessage(sock, jid, phone, text) {
   if (!userState[phone]) userState[phone] = { step: 'start' };
   const state = userState[phone];
+  const lower = text.toLowerCase();
 
-  if (text.toLowerCase() === 'hi' || text.toLowerCase() === 'start') {
-    state.step = 'jobtype';
-    await sendJobList(sock, jid);
+  if (lower === 'hi' || lower === 'start' || lower === 'menu') {
+    state.step = 'state';
+    await sendStateList(sock, jid);
     return;
   }
 
-  if (state.step === 'jobtype') {
-    const matched = JOB_TYPES.find(j => j.toLowerCase() === text.toLowerCase());
+  if (state.step === 'state') {
+    const matched = STATES.find(s => s.toLowerCase() === lower);
     if (matched) {
-      await checkAndReply(sock, jid, phone, matched);
+      state.selectedState = matched;
+      state.step = 'category';
+      await sendCategoryList(sock, jid);
       return;
     }
   }
 
-  await sock.sendMessage(sock, { text: 'Type "Hi" to start checking job notifications.' }).catch(() => {});
+  if (state.step === 'category') {
+    if (lower === 'all govt jobs') {
+      await checkAndReply(sock, jid, phone, state.selectedState, null);
+      return;
+    }
+    const matched = CATEGORY_NAMES.find(c => c.toLowerCase() === lower);
+    if (matched) {
+      state.selectedCategory = matched;
+      state.step = 'jobtype';
+      await sendJobTypeList(sock, jid, matched);
+      return;
+    }
+  }
+
+  if (state.step === 'jobtype') {
+    const options = CATEGORIES[state.selectedCategory] || [];
+    const matched = options.find(j => j.toLowerCase() === lower);
+    if (matched) {
+      await checkAndReply(sock, jid, phone, state.selectedState, matched);
+      return;
+    }
+  }
+
   await sock.sendMessage(jid, { text: 'Type "Hi" to start checking job notifications.' });
 }
 
-async function sendJobList(sock, jid) {
+async function sendStateList(sock, jid) {
   await sock.sendMessage(jid, {
-    text: 'Select Job Type\n\n' + JOB_TYPES.map((o, i) => `${i + 1}. ${o}`).join('\n') +
-      '\n\nReply with the exact name (e.g. "Police Constable" or "All AP Govt Jobs").'
+    text: 'Welcome! Select your State',
+    footer: 'AP & Telangana Govt Jobs Bot',
+    title: 'Select State',
+    buttonText: 'Choose State',
+    sections: [
+      {
+        title: 'States',
+        rows: STATES.map(s => ({ title: s, rowId: s }))
+      }
+    ]
   });
 }
 
-async function checkAndReply(sock, jid, phone, jobType) {
+async function sendCategoryList(sock, jid) {
+  const rows = CATEGORY_NAMES.map(c => ({ title: c, rowId: c }));
+  rows.push({ title: 'All Govt Jobs', rowId: 'All Govt Jobs', description: 'See everything at once' });
+
+  await sock.sendMessage(jid, {
+    text: 'Select Job Category',
+    footer: 'AP & Telangana Govt Jobs Bot',
+    title: 'Select Category',
+    buttonText: 'Choose Category',
+    sections: [{ title: 'Categories', rows }]
+  });
+}
+
+async function sendJobTypeList(sock, jid, category) {
+  const options = CATEGORIES[category];
+  await sock.sendMessage(jid, {
+    text: `Select specific job under ${category}`,
+    footer: 'AP & Telangana Govt Jobs Bot',
+    title: category,
+    buttonText: 'Choose Job',
+    sections: [
+      {
+        title: category,
+        rows: options.map(j => ({ title: j, rowId: j }))
+      }
+    ]
+  });
+}
+
+async function checkAndReply(sock, jid, phone, selectedState, jobType) {
   await supabase.from('users').upsert(
-    { phone, job_type: jobType, last_interaction: new Date() },
+    { phone, job_type: jobType || 'All Govt Jobs', last_interaction: new Date() },
     { onConflict: 'phone' }
   );
 
@@ -140,15 +192,22 @@ async function checkAndReply(sock, jid, phone, jobType) {
     userRow?.expiry_date &&
     new Date(userRow.expiry_date) > new Date();
 
-  let query = supabase.from('live_jobs').select('*').order('last_updated', { ascending: false }).limit(10);
-  if (jobType !== 'All AP Govt Jobs') {
+  let query = supabase
+    .from('live_jobs')
+    .select('*')
+    .eq('district', selectedState)
+    .order('last_updated', { ascending: false })
+    .limit(10);
+
+  if (jobType) {
     query = query.eq('job_type', jobType);
   }
+
   const { data: jobs } = await query;
 
   if (!jobs || jobs.length === 0) {
     await sock.sendMessage(jid, {
-      text: `No active notification right now for ${jobType}. We'll notify you when one opens.`
+      text: `No active notification right now for ${jobType || 'any category'} in ${selectedState}. We'll notify you when one opens.\n\nType "Hi" to search again.`
     });
     return;
   }
@@ -167,6 +226,8 @@ async function checkAndReply(sock, jid, phone, jobType) {
       });
     }
   }
+
+  await sock.sendMessage(jid, { text: 'Type "Hi" to search again.' });
 }
 
 app.post('/razorpay-webhook', async (req, res) => {
