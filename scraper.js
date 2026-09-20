@@ -22,35 +22,38 @@ const JOB_KEYWORDS = [
   { match: /group[\s-]?4/i, jobType: 'Group 4' }
 ];
 
-async function scrapeSource(source) {
-  try {
-    const { data: html } = await axios.get(source.url, {
-      timeout: 15000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-    });
-    const $ = cheerio.load(html);
-    const foundLinks = [];
+async async function scrapeSource(source) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const { data: html } = await axios.get(source.url, {
+        timeout: 20000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+      });
+      const $ = cheerio.load(html);
+      const foundLinks = [];
 
-    $('a').each((i, el) => {
-      const text = $(el).text().trim();
-      const href = $(el).attr('href');
-      if (!text || !href) return;
+      $('a').each((i, el) => {
+        const text = $(el).text().trim();
+        const href = $(el).attr('href');
+        if (!text || !href) return;
 
-      for (const kw of JOB_KEYWORDS) {
-        if (kw.match.test(text)) {
-          let fullLink = href;
-          if (!href.startsWith('http')) {
-            fullLink = new URL(href, source.url).href;
+        for (const kw of JOB_KEYWORDS) {
+          if (kw.match.test(text)) {
+            let fullLink = href;
+            if (!href.startsWith('http')) {
+              fullLink = new URL(href, source.url).href;
+            }
+            foundLinks.push({ title: text, link: fullLink, jobType: kw.jobType });
           }
-          foundLinks.push({ title: text, link: fullLink, jobType: kw.jobType });
         }
-      }
-    });
+      });
 
-    return foundLinks;
-  } catch (err) {
-    console.log(`Scrape failed for ${source.name}:`, err.message);
-    return [];
+      return foundLinks;
+    } catch (err) {
+      console.log(`Attempt ${attempt} failed for ${source.name}:`, err.message);
+      if (attempt === 3) return [];
+      await new Promise(r => setTimeout(r, 3000));
+    }
   }
 }
 
