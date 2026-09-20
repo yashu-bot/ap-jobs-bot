@@ -20,31 +20,31 @@ const JOB_KEYWORDS = [
   { match: /group[\s-]?4/i, jobType: 'Group 4' }
 ];
 
-async function scrapeSource(source) {
+async async function scrapeSource(source) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const { data: html } = await axios.get(source.url, {
+      const proxyUrl = 'https://r.jina.ai/' + source.url;
+      const { data: text } = await axios.get(proxyUrl, {
         timeout: 20000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        headers: { 'X-Return-Format': 'text' }
       });
-      const $ = cheerio.load(html);
+
       const foundLinks = [];
+      const lines = text.split('\n');
 
-      $('a').each((i, el) => {
-        const text = $(el).text().trim();
-        const href = $(el).attr('href');
-        if (!text || !href) return;
-
+      for (const line of lines) {
         for (const kw of JOB_KEYWORDS) {
-          if (kw.match.test(text)) {
-            let fullLink = href;
-            if (!href.startsWith('http')) {
-              fullLink = new URL(href, source.url).href;
-            }
-            foundLinks.push({ title: text, link: fullLink, jobType: kw.jobType });
+          if (kw.match.test(line)) {
+            // Try to pull a URL if present on the same line
+            const urlMatch = line.match(/https?:\/\/[^\s)]+/);
+            foundLinks.push({
+              title: line.trim().slice(0, 200),
+              link: urlMatch ? urlMatch[0] : source.url,
+              jobType: kw.jobType
+            });
           }
         }
-      });
+      }
 
       return foundLinks;
     } catch (err) {
