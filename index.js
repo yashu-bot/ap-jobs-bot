@@ -8,6 +8,8 @@ const {
 const pino = require('pino');
 const qrcode = require('qrcode');
 const cron = require('node-cron');
+const fs = require('fs');
+const path = require('path');
 const supabase = require('./supabaseClient');
 const { runScraper } = require('./scraper');
 
@@ -18,6 +20,7 @@ const AUTH_FOLDER = './auth_info';
 const userState = {};
 let currentQR = null;
 let isConnected = false;
+let globalSock = null;
 
 const STATES = ['Andhra Pradesh', 'Telangana'];
 
@@ -32,7 +35,59 @@ const CATEGORIES = {
 
 const CATEGORY_NAMES = Object.keys(CATEGORIES);
 
+// ---------- SESSION PERSISTENCE (fixes the 2-3 min logout) ----------
+// Baileys writes several small files into AUTH_FOLDER. We back them all up
+// into one Supabase row, and restore them before Baileys even starts,
+// so a Render restart no longer wipes the WhatsApp login.
+
+async function restoreSessionFromSupabase() {
+  try {
+    const { data, error } = await supabase
+      .from('bot_session')
+      .select('data')
+      .eq('id', 'whatsapp_auth')
+      .maybeSingle();
+
+    if (error || !data || !data.data) {
+      console.log('No saved session found in Supabase — fresh QR will be needed.');
+      return;
+    }
+
+    if (!fs.existsSync(AUTH_FOLDER)) fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+
+    const files = data.data;
+    for (const filename of Object.keys(files)) {
+      fs.writeFileSync(path.join(AUTH_FOLDER, filename), files[filename]);
+    }
+    console.log(`✅ Restored ${Object.keys(files).length} session file(s) from Supabase.`);
+  } catch (err) {
+    console.log('Session restore failed:', err.message);
+  }
+}
+
+async function backupSessionToSupabase() {
+  try {
+    if (!fs.existsSync(AUTH_FOLDER)) return;
+    const filenames = fs.readdirSync(AUTH_FOLDER);
+    const files = {};
+    for (const filename of filenames) {
+      files[filename] = fs.readFileSync(path.join(AUTH_FOLDER, filename), 'utf8');
+    }
+    await supabase.from('bot_session').upsert({ id: 'whatsapp_auth', data: files });
+  } catch (err) {
+    console.log('Session backup failed:', err.message);
+  }
+}
+
+async function clearSavedSession() {
+  await supabase.from('bot_session').delete().eq('id', 'whatsapp_auth');
+}
+
+// ---------- BOT ----------
+
 async function startBot() {
+  await restoreSessionFromSupabase();
+
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
   const { version } = await fetchLatestBaileysVersion();
 
@@ -42,9 +97,14 @@ async function startBot() {
     logger: pino({ level: 'silent' })
   });
 
-  sock.ev.on('creds.update', saveCreds);
+  globalSock = sock;
 
-  sock.ev.on('connection.update', (update) => {
+  sock.ev.on('creds.update', async () => {
+    await saveCreds();
+    await backupSessionToSupabase();
+  });
+
+  sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
@@ -55,14 +115,20 @@ async function startBot() {
 
     if (connection === 'close') {
       isConnected = false;
-      const shouldReconnect =
-        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('Connection closed. Reconnecting:', shouldReconnect);
-      if (shouldReconnect) startBot();
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const loggedOut = statusCode === DisconnectReason.loggedOut;
+
+      if (loggedOut) {
+        console.log('Logged out — clearing saved session, fresh QR needed.');
+        await clearSavedSession();
+      }
+      console.log('Connection closed. Reconnecting:', !loggedOut);
+      if (!loggedOut) startBot();
     } else if (connection === 'open') {
       isConnected = true;
       currentQR = null;
       console.log('✅ Bot connected to WhatsApp');
+      await backupSessionToSupabase();
     }
   });
 
@@ -81,7 +147,6 @@ async function startBot() {
   });
 }
 
-// Picks an option from a list either by number (1,2,3...) or by typed name (partial match allowed)
 function resolveChoice(input, options) {
   const trimmed = input.trim();
   const asNumber = parseInt(trimmed, 10);
@@ -206,6 +271,7 @@ async function checkAndReply(sock, jid, phone, selectedState, jobType) {
   await sock.sendMessage(jid, { text: 'Type "Hi" to search again.' });
 }
 
+// ---------- Razorpay webhook (real payment path) ----------
 app.post('/razorpay-webhook', async (req, res) => {
   const payload = req.body;
   if (payload.event === 'payment.captured') {
@@ -217,9 +283,36 @@ app.post('/razorpay-webhook', async (req, res) => {
         { phone, paid_status: true, expiry_date: expiry.toISOString().split('T')[0] },
         { onConflict: 'phone' }
       );
+
+      // Send confirmation on WhatsApp automatically
+      if (globalSock) {
+        try {
+          await globalSock.sendMessage(`${phone}@s.whatsapp.net`, {
+            text: `✅ Payment received! You're now subscribed for 1 year. Type "Hi" to get your job notifications with full apply links and document checklists.`
+          });
+        } catch (err) {
+          console.log('Could not send confirmation:', err.message);
+        }
+      }
     }
   }
   res.sendStatus(200);
+});
+
+// ---------- TESTING ONLY: manually mark a phone as paid, since Razorpay isn't live yet ----------
+// Visit: https://your-render-url.onrender.com/mark-paid?phone=91XXXXXXXXXX
+// Remove or protect this before going live publicly.
+app.get('/mark-paid', async (req, res) => {
+  const phone = req.query.phone;
+  if (!phone) return res.send('Add ?phone=91XXXXXXXXXX to the URL');
+
+  const expiry = new Date();
+  expiry.setFullYear(expiry.getFullYear() + 1);
+  await supabase.from('users').upsert(
+    { phone, paid_status: true, expiry_date: expiry.toISOString().split('T')[0] },
+    { onConflict: 'phone' }
+  );
+  res.send(`✅ ${phone} marked as paid for testing. Message the bot now to see the full experience.`);
 });
 
 app.get('/qr', async (req, res) => {
