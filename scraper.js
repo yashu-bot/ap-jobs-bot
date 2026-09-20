@@ -25,8 +25,7 @@ async function scrapeSource(source) {
     try {
       const proxyUrl = 'https://r.jina.ai/' + source.url;
       const { data: text } = await axios.get(proxyUrl, {
-        timeout: 20000,
-        headers: { 'X-Return-Format': 'text' }
+        timeout: 25000
       });
 
       const foundLinks = [];
@@ -47,9 +46,10 @@ async function scrapeSource(source) {
 
       return foundLinks;
     } catch (err) {
-      console.log(`Attempt ${attempt} failed for ${source.name}:`, err.message);
+      const detail = err.response?.data || err.message;
+      console.log(`Attempt ${attempt} failed for ${source.name}:`, detail);
       if (attempt === 3) return [];
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 4000));
     }
   }
 }
