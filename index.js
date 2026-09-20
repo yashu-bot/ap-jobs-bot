@@ -137,7 +137,7 @@ async function startBot() {
     if (!msg.message || msg.key.fromMe) return;
 
     const from = msg.key.remoteJid;
-    const phone = from.split('@')[0];
+    const phone = from.split('@')[0].split(':')[0];
     const text =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
