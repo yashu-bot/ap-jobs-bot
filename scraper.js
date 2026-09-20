@@ -7,10 +7,8 @@ const supabase = require('./supabaseClient');
 
 const STANDARD_DOCS = '10th/SSC certificate, Intermediate/Degree certificate, Aadhar card, Recent passport-size photo, Caste certificate (if applicable), Study/Residence certificate, Signature scan';
 
-const SOURCES = [
-  { url: 'https://slprb.ap.gov.in/', name: 'SLPRB' },
-  { url: 'https://psc.ap.gov.in/', name: 'APPSC' }
-];
+// RSS feed of an AP government jobs news site — reliable, fast, built for automated reading
+const FEED_URL = 'https://www.apteachers.in/feeds/posts/default?alt=rss&max-results=30';
 
 const JOB_KEYWORDS = [
   { match: /constable/i, jobType: 'Police Constable' },
@@ -20,63 +18,60 @@ const JOB_KEYWORDS = [
   { match: /group[\s-]?4/i, jobType: 'Group 4' }
 ];
 
-async function scrapeSource(source) {
+async function scrapeFeed() {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const proxyUrl = 'https://r.jina.ai/' + source.url;
-      const { data: text } = await axios.get(proxyUrl, {
-        timeout: 25000
+      const { data: xml } = await axios.get(FEED_URL, {
+        timeout: 20000,
+        headers: { 'User-Agent': 'Mozilla/5.0' }
       });
 
+      const $ = cheerio.load(xml, { xmlMode: true });
       const foundLinks = [];
-      const lines = text.split('\n');
 
-      for (const line of lines) {
+      $('item').each((i, el) => {
+        const title = $(el).find('title').text().trim();
+        const link = $(el).find('link').text().trim();
+        if (!title || !link) return;
+
         for (const kw of JOB_KEYWORDS) {
-          if (kw.match.test(line)) {
-            const urlMatch = line.match(/https?:\/\/[^\s)]+/);
-            foundLinks.push({
-              title: line.trim().slice(0, 200),
-              link: urlMatch ? urlMatch[0] : source.url,
-              jobType: kw.jobType
-            });
+          if (kw.match.test(title)) {
+            foundLinks.push({ title, link, jobType: kw.jobType });
           }
         }
-      }
+      });
 
       return foundLinks;
     } catch (err) {
-      const detail = err.response?.data || err.message;
-      console.log(`Attempt ${attempt} failed for ${source.name}:`, detail);
+      console.log(`Attempt ${attempt} failed:`, err.message);
       if (attempt === 3) return [];
-      await new Promise(r => setTimeout(r, 4000));
+      await new Promise(r => setTimeout(r, 3000));
     }
   }
 }
 
 async function runScraper() {
   console.log('🔍 Running scraper check...');
-  for (const source of SOURCES) {
-    const found = await scrapeSource(source);
+  const found = await scrapeFeed();
+  console.log(`Found ${found.length} matching notification(s) in feed.`);
 
-    for (const item of found) {
-      const { data: existing } = await supabase
-        .from('live_jobs')
-        .select('id')
-        .eq('portal_link', item.link)
-        .maybeSingle();
+  for (const item of found) {
+    const { data: existing } = await supabase
+      .from('live_jobs')
+      .select('id')
+      .eq('portal_link', item.link)
+      .maybeSingle();
 
-      if (!existing) {
-        await supabase.from('live_jobs').insert({
-          district: 'State-wide',
-          job_type: item.jobType,
-          title: item.title,
-          portal_link: item.link,
-          documents_required: STANDARD_DOCS,
-          last_updated: new Date()
-        });
-        console.log(`✅ New notification added: ${item.jobType} — ${item.title}`);
-      }
+    if (!existing) {
+      await supabase.from('live_jobs').insert({
+        district: 'State-wide',
+        job_type: item.jobType,
+        title: item.title,
+        portal_link: item.link,
+        documents_required: STANDARD_DOCS,
+        last_updated: new Date()
+      });
+      console.log(`✅ New notification added: ${item.jobType} — ${item.title}`);
     }
   }
   console.log('Scraper check complete.');
