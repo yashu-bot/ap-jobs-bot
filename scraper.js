@@ -25,15 +25,17 @@ const JOB_KEYWORDS = [
   { match: /ward\s*volunteer|village\s*volunteer/i, jobType: 'Village/Ward Volunteer' },
   { match: /sachivalayam/i, jobType: 'Grama/Ward Sachivalayam' },
   { match: /anganwadi/i, jobType: 'Anganwadi' },
-  { match: /forest\s*beat\s*officer|forest\s*range\s*officer/i, jobType: 'Forest Department' },
+  { match: /forest\s*beat|forest\s*range\s*officer|forest\s*department/i, jobType: 'Forest Department' },
   { match: /high\s*court.*recruitment|recruitment.*high\s*court/i, jobType: 'High Court Staff' },
-  { match: /APSPDCL|APEPDCL|APCPDCL|APSPDCL|power\s*department\s*recruitment/i, jobType: 'Power Department (DISCOM)' },
-  { match: /staff\s*nurse|health\s*department\s*recruitment|ANM\b/i, jobType: 'Health Department' },
+  { match: /APSPDCL|APEPDCL|APCPDCL|power\s*department\s*recruitment/i, jobType: 'Power Department (DISCOM)' },
+  { match: /staff\s*nurse|health\s*department\s*recruitment|\bANM\b/i, jobType: 'Health Department' },
   { match: /agriculture\s*officer/i, jobType: 'Agriculture Officer' },
   { match: /APSRTC|RTC\s*recruitment/i, jobType: 'APSRTC' },
-  { match: /excise\s*constable|excise\s*department/i, jobType: 'Excise Department' },
-  { match: /forest\s*beat/i, jobType: 'Forest Beat Officer' }
+  { match: /excise\s*constable|excise\s*department/i, jobType: 'Excise Department' }
 ];
+
+// Catch-all: if a post mentions AP govt recruitment but didn't match any specific keyword above
+const GENERIC_MATCH = /recruitment|notification|vacanc(y|ies)|walk-?in/i;
 
 async function scrapeFeed() {
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -51,10 +53,17 @@ async function scrapeFeed() {
         const link = $(el).find('link').text().trim();
         if (!title || !link) return;
 
+        let matchedSpecific = false;
         for (const kw of JOB_KEYWORDS) {
           if (kw.match.test(title)) {
             foundLinks.push({ title, link, jobType: kw.jobType });
+            matchedSpecific = true;
           }
+        }
+
+        // Also add to the catch-all bucket regardless, so "All AP Govt Jobs" always has full coverage
+        if (GENERIC_MATCH.test(title)) {
+          foundLinks.push({ title, link, jobType: 'All AP Govt Jobs' });
         }
       });
 
@@ -70,13 +79,14 @@ async function scrapeFeed() {
 async function runScraper() {
   console.log('🔍 Running scraper check...');
   const found = await scrapeFeed();
-  console.log(`Found ${found.length} matching notification(s) in feed.`);
+  console.log(`Found ${found.length} matching entries in feed.`);
 
   for (const item of found) {
     const { data: existing } = await supabase
       .from('live_jobs')
       .select('id')
       .eq('portal_link', item.link)
+      .eq('job_type', item.jobType)
       .maybeSingle();
 
     if (!existing) {
@@ -88,7 +98,7 @@ async function runScraper() {
         documents_required: STANDARD_DOCS,
         last_updated: new Date()
       });
-      console.log(`✅ New notification added: ${item.jobType} — ${item.title}`);
+      console.log(`✅ New: ${item.jobType} — ${item.title}`);
     }
   }
   console.log('Scraper check complete.');
