@@ -187,6 +187,10 @@ app.get('/qr', async (req, res) => {
   `);
 });
 
+app.get('/run-scraper', async (req, res) => {
+  await runScraper();
+  res.send('Scraper ran — check Render logs for results.');
+});
 app.get('/', (req, res) => res.send('Bot is alive'));
 
 app.listen(process.env.PORT || 3000, () => console.log('Server running'));
