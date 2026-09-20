@@ -20,7 +20,7 @@ const JOB_KEYWORDS = [
   { match: /group[\s-]?4/i, jobType: 'Group 4' }
 ];
 
-async async function scrapeSource(source) {
+async function scrapeSource(source) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const proxyUrl = 'https://r.jina.ai/' + source.url;
@@ -35,7 +35,6 @@ async async function scrapeSource(source) {
       for (const line of lines) {
         for (const kw of JOB_KEYWORDS) {
           if (kw.match.test(line)) {
-            // Try to pull a URL if present on the same line
             const urlMatch = line.match(/https?:\/\/[^\s)]+/);
             foundLinks.push({
               title: line.trim().slice(0, 200),
