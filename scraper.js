@@ -1,3 +1,5 @@
+const dns = require('dns');
+dns.setServers(['8.8.8.8', '1.1.1.1']);                                                                      
 const axios = require('axios');
 const cheerio = require('cheerio');
 const supabase = require('./supabaseClient');
