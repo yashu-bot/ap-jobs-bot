@@ -20,7 +20,7 @@ let currentQR = null;
 let isConnected = false;
 
 const DISTRICTS = ['Guntur', 'Anantapur', 'Krishna', 'Visakhapatnam', 'State-wide'];
-const JOB_TYPES = ['Police Constable', 'MRO', 'VRO', 'Group 2', 'Group 4'];
+const JOB_TYPES = ['Police Constable', 'Sub Inspector', 'MRO', 'VRO', 'Group 1', 'Group 2', 'Group 3', 'Group 4', 'Teacher / DSC', 'Junior Lecturer', 'Junior Assistant', 'Panchayat Secretary', 'Village/Ward Volunteer', 'Grama/Ward Sachivalayam', 'Anganwadi', 'Forest Department', 'High Court Staff', 'Power Department (DISCOM)', 'Health Department', 'Agriculture Officer', 'APSRTC', 'Excise Department'];
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
