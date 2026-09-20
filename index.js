@@ -343,6 +343,18 @@ app.get('/mark-paid', async (req, res) => {
 
   if (error) return res.send('Error: ' + error.message);
   res.send(`✅ ${phone} marked as paid for testing (if that phone exists in users table). Message the bot with "Hi" again to see the full experience.`);
+}); 
+
+app.get('/reset-session', async (req, res) => {
+  try {
+    await supabase.from('bot_session').delete().eq('id', 'whatsapp_auth');
+    if (fs.existsSync(AUTH_FOLDER)) {
+      fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+    }
+    res.send('✅ Session cleared. Redeploy the service now, then visit /qr to scan fresh.');
+  } catch (err) {
+    res.send('Error clearing session: ' + err.message);
+  }
 });
 
 app.get('/qr', async (req, res) => {
