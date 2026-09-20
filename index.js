@@ -187,6 +187,34 @@ app.get('/qr', async (req, res) => {
   `);
 });
 
+app.get('/test-network', async (req, res) => {
+  const axios = require('axios');
+  const results = {};
+
+  try {
+    await axios.get('https://google.com', { timeout: 10000 });
+    results.google = 'OK';
+  } catch (err) {
+    results.google = 'FAILED: ' + err.message;
+  }
+
+  try {
+    await axios.get('https://slprb.ap.gov.in/', { timeout: 10000 });
+    results.slprb = 'OK';
+  } catch (err) {
+    results.slprb = 'FAILED: ' + err.message;
+  }
+
+  try {
+    await axios.get('https://www.ap.gov.in/', { timeout: 10000 });
+    results.apgovin = 'OK';
+  } catch (err) {
+    results.apgovin = 'FAILED: ' + err.message;
+  }
+
+  res.json(results);
+});
+
 app.get('/run-scraper', async (req, res) => {
   await runScraper();
   res.send('Scraper ran — check Render logs for results.');
