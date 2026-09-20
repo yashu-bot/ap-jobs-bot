@@ -72,16 +72,27 @@ async function startBot() {
 
     const from = msg.key.remoteJid;
     const phone = from.split('@')[0];
-
-    const listReply = msg.message.listResponseMessage?.singleSelectReply?.selectedRowId;
-    const typedText =
+    const text =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
       '';
 
-    const text = (listReply || typedText || '').trim();
-    await handleMessage(sock, from, phone, text);
+    await handleMessage(sock, from, phone, text.trim());
   });
+}
+
+// Picks an option from a list either by number (1,2,3...) or by typed name (partial match allowed)
+function resolveChoice(input, options) {
+  const trimmed = input.trim();
+  const asNumber = parseInt(trimmed, 10);
+  if (!isNaN(asNumber) && asNumber >= 1 && asNumber <= options.length) {
+    return options[asNumber - 1];
+  }
+  const lower = trimmed.toLowerCase();
+  const exact = options.find(o => o.toLowerCase() === lower);
+  if (exact) return exact;
+  const partial = options.find(o => o.toLowerCase().includes(lower) || lower.includes(o.toLowerCase()));
+  return partial || null;
 }
 
 async function handleMessage(sock, jid, phone, text) {
@@ -91,37 +102,39 @@ async function handleMessage(sock, jid, phone, text) {
 
   if (lower === 'hi' || lower === 'start' || lower === 'menu') {
     state.step = 'state';
-    await sendStateList(sock, jid);
+    await sendNumberedList(sock, jid, 'Select your State', STATES);
     return;
   }
 
   if (state.step === 'state') {
-    const matched = STATES.find(s => s.toLowerCase() === lower);
+    const matched = resolveChoice(text, STATES);
     if (matched) {
       state.selectedState = matched;
       state.step = 'category';
-      await sendCategoryList(sock, jid);
+      const allOptions = [...CATEGORY_NAMES, 'All Govt Jobs'];
+      await sendNumberedList(sock, jid, `Select Job Category (${matched})`, allOptions);
       return;
     }
   }
 
   if (state.step === 'category') {
-    if (lower === 'all govt jobs') {
+    const allOptions = [...CATEGORY_NAMES, 'All Govt Jobs'];
+    const matched = resolveChoice(text, allOptions);
+    if (matched === 'All Govt Jobs') {
       await checkAndReply(sock, jid, phone, state.selectedState, null);
       return;
     }
-    const matched = CATEGORY_NAMES.find(c => c.toLowerCase() === lower);
-    if (matched) {
+    if (matched && CATEGORIES[matched]) {
       state.selectedCategory = matched;
       state.step = 'jobtype';
-      await sendJobTypeList(sock, jid, matched);
+      await sendNumberedList(sock, jid, `Select job under ${matched}`, CATEGORIES[matched]);
       return;
     }
   }
 
   if (state.step === 'jobtype') {
     const options = CATEGORIES[state.selectedCategory] || [];
-    const matched = options.find(j => j.toLowerCase() === lower);
+    const matched = resolveChoice(text, options);
     if (matched) {
       await checkAndReply(sock, jid, phone, state.selectedState, matched);
       return;
@@ -131,47 +144,10 @@ async function handleMessage(sock, jid, phone, text) {
   await sock.sendMessage(jid, { text: 'Type "Hi" to start checking job notifications.' });
 }
 
-async function sendStateList(sock, jid) {
+async function sendNumberedList(sock, jid, title, options) {
+  const listText = options.map((o, i) => `${i + 1}. ${o}`).join('\n');
   await sock.sendMessage(jid, {
-    text: 'Welcome! Select your State',
-    footer: 'AP & Telangana Govt Jobs Bot',
-    title: 'Select State',
-    buttonText: 'Choose State',
-    sections: [
-      {
-        title: 'States',
-        rows: STATES.map(s => ({ title: s, rowId: s }))
-      }
-    ]
-  });
-}
-
-async function sendCategoryList(sock, jid) {
-  const rows = CATEGORY_NAMES.map(c => ({ title: c, rowId: c }));
-  rows.push({ title: 'All Govt Jobs', rowId: 'All Govt Jobs', description: 'See everything at once' });
-
-  await sock.sendMessage(jid, {
-    text: 'Select Job Category',
-    footer: 'AP & Telangana Govt Jobs Bot',
-    title: 'Select Category',
-    buttonText: 'Choose Category',
-    sections: [{ title: 'Categories', rows }]
-  });
-}
-
-async function sendJobTypeList(sock, jid, category) {
-  const options = CATEGORIES[category];
-  await sock.sendMessage(jid, {
-    text: `Select specific job under ${category}`,
-    footer: 'AP & Telangana Govt Jobs Bot',
-    title: category,
-    buttonText: 'Choose Job',
-    sections: [
-      {
-        title: category,
-        rows: options.map(j => ({ title: j, rowId: j }))
-      }
-    ]
+    text: `${title}\n\n${listText}\n\nReply with the number (e.g. "1") or the name.`
   });
 }
 
