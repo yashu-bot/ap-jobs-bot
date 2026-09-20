@@ -1,5 +1,5 @@
-const express = require('express');
-const {
+const qrcode = require('qrcode');
+let currentQR = null;
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
