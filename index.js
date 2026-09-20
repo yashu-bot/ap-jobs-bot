@@ -1,5 +1,5 @@
-const express = require('express');
-const {
+const cron = require('node-cron');
+const { runScraper } = require('./scraper');
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
@@ -188,4 +188,6 @@ app.get('/qr', async (req, res) => {
 app.get('/', (req, res) => res.send('Bot is alive'));
 
 app.listen(process.env.PORT || 3000, () => console.log('Server running'));
-startBot();
+// Run scraper immediately on startup, then every 30 minutes
+runScraper();
+cron.schedule('*/30 * * * *', runScraper);
